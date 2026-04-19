@@ -3,11 +3,18 @@ Attendance Record Storage System
 Simulates HDFS  → local folder  : hdfs_store/
 Simulates Cloud → local folder  : cloud_store/
 SQLite database for fast queries : attendance.db
+
+File Storage (Cloud SaaS over LAN):
+  - Files are split into fixed-size blocks (64 KB each)
+  - Each block is individually encrypted with Fernet (AES-128-CBC)
+  - Encrypted blocks are stored in HDFS-style partitioned folders
+  - Download reassembles and decrypts blocks on the fly
 """
 
-import os, json, csv, sqlite3
+import os, json, csv, sqlite3, io
 from datetime import datetime
-from flask import Flask, request, jsonify, render_template, redirect, url_for
+from flask import Flask, request, jsonify, render_template, redirect, url_for, send_file
+from cryptography.fernet import Fernet
 
 # ── paths ──────────────────────────────────────────────────────────────────
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
@@ -15,8 +22,12 @@ HDFS_DIR    = os.path.join(BASE_DIR, "hdfs_store")   # simulates HDFS
 CLOUD_DIR   = os.path.join(BASE_DIR, "cloud_store")  # simulates S3/GCS/Azure
 DB_PATH     = os.path.join(BASE_DIR, "attendance.db")
 
+BLOCK_SIZE  = 64 * 1024          # 64 KB per block
+FILE_DIR    = os.path.join(HDFS_DIR, "files")   # encrypted blocks live here
+
 os.makedirs(HDFS_DIR,  exist_ok=True)
 os.makedirs(CLOUD_DIR, exist_ok=True)
+os.makedirs(FILE_DIR,  exist_ok=True)
 
 # ── Flask ──────────────────────────────────────────────────────────────────
 app = Flask(__name__)
@@ -40,6 +51,28 @@ def init_db():
                 time_out    TEXT,
                 status      TEXT    DEFAULT 'present',
                 created_at  TEXT    DEFAULT (datetime('now'))
+            )
+        """)
+        # File storage tables
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS files (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                filename      TEXT    NOT NULL,
+                original_size INTEGER NOT NULL,
+                block_size    INTEGER NOT NULL,
+                block_count   INTEGER NOT NULL,
+                enc_key       TEXT    NOT NULL,
+                created_at    TEXT    DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS file_blocks (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_id     INTEGER NOT NULL,
+                block_index INTEGER NOT NULL,
+                block_path  TEXT    NOT NULL,
+                enc_size    INTEGER NOT NULL,
+                FOREIGN KEY(file_id) REFERENCES files(id)
             )
         """)
         conn.commit()
@@ -186,6 +219,104 @@ def submit_form():
     }
     save_record(record)
     return redirect(url_for("dashboard"))
+
+
+# ── File Storage routes ────────────────────────────────────────────────────
+@app.route("/api/upload", methods=["POST"])
+def upload_file():
+    """Split file into 64 KB blocks, encrypt each with Fernet, store in HDFS."""
+    if "file" not in request.files:
+        return jsonify({"error": "No file field in request"}), 400
+    f = request.files["file"]
+    if f.filename == "":
+        return jsonify({"error": "Empty filename"}), 400
+
+    data          = f.read()
+    original_size = len(data)
+
+    # Generate a unique Fernet key for this file
+    key    = Fernet.generate_key()
+    fernet = Fernet(key)
+
+    # Split into fixed-size blocks
+    blocks = [data[i : i + BLOCK_SIZE] for i in range(0, max(len(data), 1), BLOCK_SIZE)]
+
+    with get_db() as conn:
+        cur = conn.execute("""
+            INSERT INTO files (filename, original_size, block_size, block_count, enc_key)
+            VALUES (?, ?, ?, ?, ?)
+        """, (f.filename, original_size, BLOCK_SIZE, len(blocks), key.decode()))
+        file_id = cur.lastrowid
+
+        for idx, block in enumerate(blocks):
+            encrypted = fernet.encrypt(block)
+            folder    = os.path.join(FILE_DIR, f"file_{file_id}", f"block_{idx}")
+            os.makedirs(folder, exist_ok=True)
+            path = os.path.join(folder, "data.enc")
+            with open(path, "wb") as bfp:
+                bfp.write(encrypted)
+            conn.execute("""
+                INSERT INTO file_blocks (file_id, block_index, block_path, enc_size)
+                VALUES (?, ?, ?, ?)
+            """, (file_id, idx, path, len(encrypted)))
+        conn.commit()
+
+    return jsonify({
+        "message":       "File uploaded, split into blocks & encrypted",
+        "file_id":       file_id,
+        "filename":      f.filename,
+        "original_size": original_size,
+        "block_size":    BLOCK_SIZE,
+        "block_count":   len(blocks),
+    }), 201
+
+
+@app.route("/api/download/<int:file_id>", methods=["GET"])
+def download_file(file_id):
+    """Decrypt and reassemble blocks, stream original file to client."""
+    with get_db() as conn:
+        meta   = conn.execute("SELECT * FROM files WHERE id=?", (file_id,)).fetchone()
+        if not meta:
+            return jsonify({"error": "File not found"}), 404
+        blocks = conn.execute(
+            "SELECT * FROM file_blocks WHERE file_id=? ORDER BY block_index",
+            (file_id,)
+        ).fetchall()
+
+    fernet = Fernet(meta["enc_key"].encode())
+    buf    = io.BytesIO()
+    for blk in blocks:
+        with open(blk["block_path"], "rb") as bfp:
+            buf.write(fernet.decrypt(bfp.read()))
+    buf.seek(0)
+    return send_file(buf, download_name=meta["filename"], as_attachment=True)
+
+
+@app.route("/api/files", methods=["GET"])
+def list_files():
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT id, filename, original_size, block_size, block_count, created_at "
+            "FROM files ORDER BY id DESC"
+        ).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route("/api/files/<int:file_id>", methods=["DELETE"])
+def delete_file(file_id):
+    with get_db() as conn:
+        blocks = conn.execute(
+            "SELECT block_path FROM file_blocks WHERE file_id=?", (file_id,)
+        ).fetchall()
+        for blk in blocks:
+            try:
+                os.remove(blk["block_path"])
+            except FileNotFoundError:
+                pass
+        conn.execute("DELETE FROM file_blocks WHERE file_id=?", (file_id,))
+        conn.execute("DELETE FROM files WHERE id=?", (file_id,))
+        conn.commit()
+    return jsonify({"message": f"File {file_id} deleted"})
 
 
 if __name__ == "__main__":

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>Attendance Record System — HDFS + Cloud</title>
+<title>Attendance Record System — HDFS + Cloud SaaS</title>
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
   body{font-family:'Segoe UI',sans-serif;background:#f0f4f8;color:#1a202c}
@@ -48,6 +48,14 @@
   .filter-bar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;align-items:flex-end}
   .filter-bar input,.filter-bar select{padding:7px 10px;border:1px solid #e2e8f0;border-radius:7px;font-size:.85rem}
   .no-records{text-align:center;padding:30px;color:#a0aec0}
+  .enc-badge{background:#7c3aed;color:#fff;border-radius:12px;padding:2px 9px;font-size:.72rem;font-weight:600}
+  .block-badge{background:#1a56db;color:#fff;border-radius:12px;padding:2px 9px;font-size:.72rem;font-weight:600}
+  .btn-purple{background:#7c3aed;color:#fff} .btn-purple:hover{background:#6d28d9}
+  .upload-area{border:2px dashed #cbd5e0;border-radius:10px;padding:22px;text-align:center;cursor:pointer;transition:.15s}
+  .upload-area:hover{border-color:#7c3aed;background:#faf5ff}
+  .upload-area input[type=file]{display:none}
+  .file-label{font-size:.9rem;color:#718096} .file-label strong{color:#2d3748}
+  #uploadProgress{display:none;margin-top:10px;font-size:.85rem;color:#7c3aed;font-weight:600}
   @media(max-width:600px){.storage-info{grid-template-columns:1fr}}
 </style>
 </head>
@@ -59,6 +67,7 @@
       <span class="badge">HDFS</span>
       <span class="badge">Cloud</span>
       <span class="badge">SQLite</span>
+      <span class="badge">🔐 Encrypted</span>
     </h1>
     <span id="currentTime"></span>
   </div>
@@ -100,6 +109,31 @@
         Individual blobs per department<br/>
         Path: <code>cloud_store/&lt;department&gt;/empID_timestamp.json</code>
       </div>
+    </div>
+  </div>
+
+  <!-- Encrypted File Storage -->
+  <div class="panel">
+    <h2>🔐 Encrypted File Storage <span class="enc-badge">Fernet AES-128</span> <span class="block-badge">64 KB blocks</span></h2>
+    <p style="font-size:.83rem;color:#718096;margin-bottom:16px">
+      Files are split into <strong>64 KB blocks</strong>, each block is <strong>encrypted individually</strong>
+      with a unique Fernet key before being stored in HDFS-partitioned folders.
+      Download automatically decrypts &amp; reassembles all blocks.
+    </p>
+
+    <!-- Upload form -->
+    <div class="upload-area" onclick="document.getElementById('fileInput').click()" id="uploadBox">
+      <input type="file" id="fileInput" onchange="handleFileSelect(this)"/>
+      <div class="file-label" id="fileLabel">📁 Click to select a file to upload</div>
+    </div>
+    <div style="margin-top:12px;display:flex;gap:10px;align-items:center">
+      <button class="btn btn-purple" onclick="uploadFile()" id="uploadBtn" disabled>⬆ Upload &amp; Encrypt</button>
+      <div id="uploadProgress"></div>
+    </div>
+
+    <!-- Files table -->
+    <div id="filesTableWrap" style="margin-top:20px">
+      <div class="no-records">Loading files…</div>
     </div>
   </div>
 
@@ -266,6 +300,91 @@ function showToast(msg){
 // show toast if redirected after form submit
 if(window.location.search.includes("saved")||document.referrer.includes("/submit"))
   showToast("Attendance saved!");
+
+// ── Encrypted File Storage ────────────────────────────────────────────────
+let selectedFile = null;
+
+function handleFileSelect(input){
+  selectedFile = input.files[0];
+  if(selectedFile){
+    document.getElementById("fileLabel").innerHTML =
+      `📄 <strong>${selectedFile.name}</strong> (${formatBytes(selectedFile.size)})`;
+    document.getElementById("uploadBtn").disabled = false;
+  }
+}
+
+async function uploadFile(){
+  if(!selectedFile) return;
+  const btn  = document.getElementById("uploadBtn");
+  const prog = document.getElementById("uploadProgress");
+  btn.disabled = true;
+  prog.style.display = "block";
+  prog.textContent   = "Splitting into blocks & encrypting…";
+
+  const fd = new FormData();
+  fd.append("file", selectedFile);
+  try{
+    const res  = await fetch("/api/upload", {method:"POST", body:fd});
+    const data = await res.json();
+    if(res.ok){
+      showToast(`✅ Uploaded: ${data.block_count} block(s) encrypted`);
+      prog.textContent = `✓ ${data.block_count} block(s) × 64 KB, encrypted with Fernet`;
+      document.getElementById("fileLabel").innerHTML = "📁 Click to select a file to upload";
+      selectedFile = null;
+      loadFiles();
+    } else {
+      prog.textContent = "Error: " + (data.error || "Upload failed");
+    }
+  } catch(e){
+    prog.textContent = "Network error";
+  }
+  btn.disabled = false;
+}
+
+function buildFilesTable(rows){
+  const wrap = document.getElementById("filesTableWrap");
+  if(!rows.length){ wrap.innerHTML='<div class="no-records">No files uploaded yet.</div>'; return; }
+  const html = `<table>
+    <thead><tr>
+      <th>#</th><th>Filename</th><th>Original Size</th>
+      <th>Blocks</th><th>Block Size</th><th>Uploaded</th><th></th>
+    </tr></thead>
+    <tbody>` +
+    rows.map(r=>`<tr>
+      <td>${r.id}</td>
+      <td><strong>${r.filename}</strong></td>
+      <td>${formatBytes(r.original_size)}</td>
+      <td><span class="block-badge">${r.block_count} block${r.block_count!==1?'s':''}</span></td>
+      <td>${formatBytes(r.block_size)}</td>
+      <td style="font-size:.8rem;color:#718096">${r.created_at}</td>
+      <td style="display:flex;gap:6px">
+        <a href="/api/download/${r.id}" class="btn btn-success btn-sm" style="text-decoration:none">⬇ Download</a>
+        <button class="btn btn-danger" onclick="deleteFile(${r.id})">✕</button>
+      </td>
+    </tr>`).join("") +
+    `</tbody></table>`;
+  wrap.innerHTML = html;
+}
+
+async function loadFiles(){
+  const rows = await fetch("/api/files").then(r=>r.json());
+  buildFilesTable(rows);
+}
+loadFiles();
+
+async function deleteFile(id){
+  if(!confirm("Delete this file and all its encrypted blocks?")) return;
+  await fetch(`/api/files/${id}`,{method:"DELETE"});
+  showToast("File deleted");
+  loadFiles();
+}
+
+function formatBytes(b){
+  if(b===0) return "0 B";
+  const k=1024, s=["B","KB","MB","GB"];
+  const i=Math.floor(Math.log(b)/Math.log(k));
+  return parseFloat((b/Math.pow(k,i)).toFixed(1))+" "+s[i];
+}
 </script>
 </body>
 </html>

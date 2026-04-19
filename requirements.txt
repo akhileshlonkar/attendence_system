@@ -1,3 +1,4 @@
 flask>=3.0
 requests
 gunicorn
+cryptography
