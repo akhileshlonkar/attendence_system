@@ -1,0 +1,8 @@
+{"emp_id": "EMP001", "name": "Akhilesh Lonkar", "department": "Engineering", "date": "2026-04-10", "time_in": "10:44:00", "time_out": "19:14:00", "status": "late"}
+{"emp_id": "EMP002", "name": "Priya Sharma", "department": "HR", "date": "2026-04-10", "time_in": "10:35:00", "time_out": "", "status": "half-day"}
+{"emp_id": "EMP003", "name": "Rohan Mehta", "department": "Finance", "date": "2026-04-10", "time_in": "08:26:00", "time_out": "19:54:00", "status": "late"}
+{"emp_id": "EMP004", "name": "Anjali Singh", "department": "Marketing", "date": "2026-04-10", "time_in": "10:46:00", "time_out": "17:46:00", "status": "present"}
+{"emp_id": "EMP005", "name": "Vikram Patil", "department": "Engineering", "date": "2026-04-10", "time_in": "10:58:00", "time_out": "17:35:00", "status": "present"}
+{"emp_id": "EMP006", "name": "Sneha Kulkarni", "department": "Operations", "date": "2026-04-10", "time_in": "", "time_out": "", "status": "absent"}
+{"emp_id": "EMP007", "name": "Arjun Desai", "department": "Engineering", "date": "2026-04-10", "time_in": "08:19:00", "time_out": "18:39:00", "status": "present"}
+{"emp_id": "EMP008", "name": "Pooja Joshi", "department": "HR", "date": "2026-04-10", "time_in": "09:53:00", "time_out": "19:19:00", "status": "present"}

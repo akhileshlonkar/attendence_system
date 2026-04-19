@@ -1,0 +1,7 @@
+hdfs_store/
+cloud_store/
+attendance.db
+*.db
+__pycache__/
+*.pyc
+.env

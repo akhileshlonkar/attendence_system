@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Attendance Record System — HDFS + Cloud</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Segoe UI',sans-serif;background:#f0f4f8;color:#1a202c}
+  header{background:linear-gradient(135deg,#1a56db,#0e9f6e);color:#fff;padding:18px 32px;display:flex;align-items:center;gap:12px}
+  header h1{font-size:1.4rem;font-weight:700}
+  header span{font-size:.85rem;opacity:.85}
+  .badge{background:rgba(255,255,255,.2);border-radius:20px;padding:2px 10px;font-size:.75rem;margin-left:8px}
+  .container{max-width:1100px;margin:24px auto;padding:0 16px;display:grid;gap:20px}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px}
+  .card{background:#fff;border-radius:12px;padding:18px;box-shadow:0 1px 4px rgba(0,0,0,.08)}
+  .card .label{font-size:.78rem;color:#718096;text-transform:uppercase;letter-spacing:.04em}
+  .card .value{font-size:2rem;font-weight:700;color:#1a56db;margin-top:4px}
+  .card.green .value{color:#0e9f6e}
+  .panel{background:#fff;border-radius:12px;padding:22px;box-shadow:0 1px 4px rgba(0,0,0,.08)}
+  .panel h2{font-size:1rem;font-weight:600;margin-bottom:16px;color:#2d3748}
+  form{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
+  form label{font-size:.8rem;color:#4a5568;margin-bottom:3px;display:block}
+  form input,form select{width:100%;padding:8px 10px;border:1px solid #e2e8f0;border-radius:7px;font-size:.9rem;background:#f7fafc}
+  form input:focus,form select:focus{outline:none;border-color:#1a56db}
+  .btn{padding:9px 22px;border:none;border-radius:7px;cursor:pointer;font-weight:600;font-size:.9rem;transition:.15s}
+  .btn-primary{background:#1a56db;color:#fff} .btn-primary:hover{background:#1446b5}
+  .btn-success{background:#0e9f6e;color:#fff} .btn-success:hover{background:#0c7a55}
+  .btn-danger{background:#e53e3e;color:#fff;padding:5px 12px;font-size:.8rem}
+  .btn-sm{padding:6px 14px;font-size:.8rem}
+  .form-actions{display:flex;align-items:flex-end;gap:10px}
+  table{width:100%;border-collapse:collapse;font-size:.87rem}
+  th{background:#f7fafc;padding:10px 12px;text-align:left;font-weight:600;color:#4a5568;border-bottom:2px solid #e2e8f0}
+  td{padding:10px 12px;border-bottom:1px solid #f0f4f8}
+  tr:hover td{background:#f7fafc}
+  .status{display:inline-block;padding:2px 10px;border-radius:12px;font-size:.75rem;font-weight:600}
+  .present{background:#d1fae5;color:#065f46}
+  .absent{background:#fee2e2;color:#991b1b}
+  .late{background:#fef3c7;color:#92400e}
+  .half-day{background:#dbeafe;color:#1e40af}
+  .storage-info{display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:.83rem}
+  .store-box{background:#f7fafc;border-radius:8px;padding:12px 16px;border-left:4px solid}
+  .store-box.hdfs{border-color:#d97706} .store-box.cloud{border-color:#1a56db}
+  .store-box strong{display:block;margin-bottom:4px;color:#2d3748}
+  .store-box code{font-family:monospace;color:#718096;font-size:.8rem}
+  #toast{position:fixed;bottom:24px;right:24px;background:#1a56db;color:#fff;padding:12px 20px;
+         border-radius:8px;display:none;z-index:999;box-shadow:0 4px 12px rgba(0,0,0,.2)}
+  .filter-bar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;align-items:flex-end}
+  .filter-bar input,.filter-bar select{padding:7px 10px;border:1px solid #e2e8f0;border-radius:7px;font-size:.85rem}
+  .no-records{text-align:center;padding:30px;color:#a0aec0}
+  @media(max-width:600px){.storage-info{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>📋 Attendance Record System
+      <span class="badge">HDFS</span>
+      <span class="badge">Cloud</span>
+      <span class="badge">SQLite</span>
+    </h1>
+    <span id="currentTime"></span>
+  </div>
+</header>
+
+<div class="container">
+
+  <!-- Summary Cards -->
+  <div class="cards">
+    <div class="card">
+      <div class="label">Total Records</div>
+      <div class="value" id="totalRec">—</div>
+    </div>
+    <div class="card green">
+      <div class="label">Today's Records</div>
+      <div class="value" id="todayRec">—</div>
+    </div>
+    <div class="card">
+      <div class="label">Departments</div>
+      <div class="value" id="deptCount">—</div>
+    </div>
+    <div class="card green">
+      <div class="label">This Month</div>
+      <div class="value" id="monthRec">—</div>
+    </div>
+  </div>
+
+  <!-- Storage Info -->
+  <div class="panel">
+    <h2>🗄️ Storage Architecture</h2>
+    <div class="storage-info">
+      <div class="store-box hdfs">
+        <strong>🟠 HDFS (Simulated)</strong>
+        Records stored as partitioned <code>JSON Lines</code><br/>
+        Path: <code>hdfs_store/year=YYYY/month=MM/day=DD/data.jsonl</code>
+      </div>
+      <div class="store-box cloud">
+        <strong>🔵 Cloud Storage (Simulated)</strong>
+        Individual blobs per department<br/>
+        Path: <code>cloud_store/&lt;department&gt;/empID_timestamp.json</code>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add Attendance Form -->
+  <div class="panel">
+    <h2>➕ Mark Attendance</h2>
+    <form method="POST" action="/submit">
+      <div>
+        <label>Employee ID *</label>
+        <input name="emp_id" placeholder="e.g. EMP001" required/>
+      </div>
+      <div>
+        <label>Full Name *</label>
+        <input name="name" placeholder="e.g. Akhilesh Lonkar" required/>
+      </div>
+      <div>
+        <label>Department</label>
+        <select name="department">
+          <option>Engineering</option>
+          <option>HR</option>
+          <option>Finance</option>
+          <option>Marketing</option>
+          <option>Operations</option>
+          <option>General</option>
+        </select>
+      </div>
+      <div>
+        <label>Date *</label>
+        <input name="date" type="date" id="dateField" required/>
+      </div>
+      <div>
+        <label>Time In</label>
+        <input name="time_in" type="time"/>
+      </div>
+      <div>
+        <label>Time Out</label>
+        <input name="time_out" type="time"/>
+      </div>
+      <div>
+        <label>Status</label>
+        <select name="status">
+          <option value="present">Present</option>
+          <option value="absent">Absent</option>
+          <option value="late">Late</option>
+          <option value="half-day">Half Day</option>
+        </select>
+      </div>
+      <div class="form-actions">
+        <button class="btn btn-primary" type="submit">Save Attendance</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- Records Table -->
+  <div class="panel">
+    <h2>📂 Attendance Records</h2>
+    <div class="filter-bar">
+      <div><label style="font-size:.8rem;color:#4a5568">Filter by Date</label>
+        <input type="date" id="filterDate"/></div>
+      <div><label style="font-size:.8rem;color:#4a5568">Employee ID</label>
+        <input type="text" id="filterEmp" placeholder="EMP001"/></div>
+      <div><label style="font-size:.8rem;color:#4a5568">Department</label>
+        <select id="filterDept">
+          <option value="">All</option>
+          <option>Engineering</option><option>HR</option><option>Finance</option>
+          <option>Marketing</option><option>Operations</option><option>General</option>
+        </select></div>
+      <button class="btn btn-success btn-sm" onclick="loadRecords()">Search</button>
+      <button class="btn btn-sm" style="background:#e2e8f0" onclick="clearFilters()">Clear</button>
+      <a href="/api/export/csv" class="btn btn-sm" style="background:#744210;color:#fff;text-decoration:none">⬇ Export CSV</a>
+    </div>
+    <div id="tableWrap">
+      <div class="no-records">Loading…</div>
+    </div>
+  </div>
+
+</div><!-- /container -->
+
+<div id="toast">✅ Attendance saved!</div>
+
+<script>
+// set today's date as default
+document.getElementById("dateField").value = new Date().toISOString().split("T")[0];
+
+// live clock
+function updateClock(){
+  document.getElementById("currentTime").textContent =
+    new Date().toLocaleString("en-IN",{weekday:"short",year:"numeric",month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"});
+}
+updateClock(); setInterval(updateClock, 1000);
+
+// load summary cards
+async function loadSummary(){
+  const d = await fetch("/api/summary").then(r=>r.json());
+  document.getElementById("totalRec").textContent  = d.total_records;
+  document.getElementById("todayRec").textContent  = d.today_records;
+  document.getElementById("deptCount").textContent = d.by_department.length;
+  const curMonth = new Date().toISOString().slice(0,7);
+  const mo = d.last_6_months.find(m=>m.month===curMonth);
+  document.getElementById("monthRec").textContent  = mo ? mo.cnt : 0;
+}
+loadSummary();
+
+// build table
+function buildTable(rows){
+  const wrap = document.getElementById("tableWrap");
+  if(!rows.length){
+    wrap.innerHTML = '<div class="no-records">No records found.</div>'; return;
+  }
+  const html = `<table>
+    <thead><tr>
+      <th>#</th><th>Emp ID</th><th>Name</th><th>Department</th>
+      <th>Date</th><th>Time In</th><th>Time Out</th><th>Status</th><th></th>
+    </tr></thead>
+    <tbody>` +
+    rows.map(r=>`<tr>
+      <td>${r.id}</td>
+      <td><strong>${r.emp_id}</strong></td>
+      <td>${r.name}</td>
+      <td>${r.department||'—'}</td>
+      <td>${r.date}</td>
+      <td>${r.time_in||'—'}</td>
+      <td>${r.time_out||'—'}</td>
+      <td><span class="status ${r.status}">${r.status}</span></td>
+      <td><button class="btn btn-danger" onclick="deleteRecord(${r.id})">✕</button></td>
+    </tr>`).join("") +
+    `</tbody></table>`;
+  wrap.innerHTML = html;
+}
+
+async function loadRecords(){
+  const date = document.getElementById("filterDate").value;
+  const emp  = document.getElementById("filterEmp").value.trim();
+  const dept = document.getElementById("filterDept").value;
+  let url = "/api/attendance?limit=200";
+  if(date) url += `&date=${date}`;
+  if(emp)  url += `&emp_id=${encodeURIComponent(emp)}`;
+  if(dept) url += `&department=${encodeURIComponent(dept)}`;
+  const rows = await fetch(url).then(r=>r.json());
+  buildTable(rows);
+}
+loadRecords();
+
+function clearFilters(){
+  document.getElementById("filterDate").value="";
+  document.getElementById("filterEmp").value="";
+  document.getElementById("filterDept").value="";
+  loadRecords();
+}
+
+async function deleteRecord(id){
+  if(!confirm("Delete this record?")) return;
+  await fetch(`/api/attendance/${id}`,{method:"DELETE"});
+  showToast("Record deleted");
+  loadRecords(); loadSummary();
+}
+
+function showToast(msg){
+  const t=document.getElementById("toast");
+  t.textContent="✅ "+msg; t.style.display="block";
+  setTimeout(()=>t.style.display="none",2500);
+}
+
+// show toast if redirected after form submit
+if(window.location.search.includes("saved")||document.referrer.includes("/submit"))
+  showToast("Attendance saved!");
+</script>
+</body>
+</html>
