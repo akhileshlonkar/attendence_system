@@ -1,0 +1,21 @@
+[Unit]
+Description=Gunicorn instance for Attendance System (Flask)
+After=network.target
+
+[Service]
+User=ubuntu
+Group=www-data
+WorkingDirectory=/home/ubuntu/attendance-system
+Environment="PATH=/home/ubuntu/attendance-system/.venv/bin"
+ExecStart=/home/ubuntu/attendance-system/.venv/bin/gunicorn \
+          --workers 3 \
+          --bind 127.0.0.1:8000 \
+          --timeout 120 \
+          --access-logfile - \
+          --error-logfile - \
+          app:app
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
