@@ -3,7 +3,10 @@
 *.sqlite3
 
 # Runtime data
-cloud_store/
+cloud_store/*
+!cloud_store/.gitkeep
+hdfs_store/*
+!hdfs_store/.gitkeep
 
 # Python
 __pycache__/
