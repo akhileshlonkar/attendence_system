@@ -1,0 +1,74 @@
+#include <iostream>
+using namespace std;
+
+#define MAX 20
+
+int N;
+int board[MAX][MAX];
+
+// Branch & Bound helper arrays
+bool col[MAX];
+bool diag1[2 * MAX];   // row + col
+bool diag2[2 * MAX];   // row - col + (N-1)
+
+// Print solution
+void printBoard() {
+    cout << "\nSolution:\n";
+    for(int i = 0; i < N; i++) {
+        for(int j = 0; j < N; j++) {
+            cout << board[i][j] << " ";
+        }
+        cout << endl;
+    }
+}
+
+// Backtracking function
+bool solve(int row) {
+    if(row == N) {
+        printBoard();
+        return true;
+    }
+
+    for(int c = 0; c < N; c++) {
+
+        // Check constraints (Branch & Bound)
+        if(col[c] || diag1[row + c] || diag2[row - c + N - 1])
+            continue;
+
+        // Place queen
+        board[row][c] = 1;
+        col[c] = diag1[row + c] = diag2[row - c + N - 1] = true;
+
+        // Recur
+        if(solve(row + 1))
+            return true;
+
+        // Backtrack
+        board[row][c] = 0;
+        col[c] = diag1[row + c] = diag2[row - c + N - 1] = false;
+    }
+
+    return false;
+}
+
+int main() {
+    cout << "Enter value of N: ";
+    cin >> N;
+
+    // Initialize
+    for(int i = 0; i < N; i++) {
+        for(int j = 0; j < N; j++)
+            board[i][j] = 0;
+    }
+
+    for(int i = 0; i < MAX; i++) {
+        col[i] = false;
+        diag1[i] = false;
+        diag2[i] = false;
+    }
+
+    if(!solve(0))
+        cout << "No solution exists!\n";
+
+    return 0;
+}
